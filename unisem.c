@@ -4,7 +4,6 @@
  * Rhino, 2019-7-22, China
  * vim: sw=4 ts=4 expandtab
  */
-
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdlib.h>
@@ -69,27 +68,29 @@ int unisem_push(unisem_t * ctx, task_t * task)
     int ret = -1;
     long unsigned id = pthread_self();
 
-    // wait for a slot with 10ms, 
-    // 10ms is the OS scheduling time slice. In practical,
-    // the producers are faster than consumers, so a busy 
-    // wait would suffice.
-    while (ctx->run && (ctx->n == N))
-        usleep(10*1000);
+    while (ctx->run && ret == -1) {
+        // wait for a slot with 10ms, 
+        // 10ms is the OS scheduling time slice. In practical,
+        // the producers are faster than consumers, so a busy 
+        // wait would suffice. 
+        while (ctx->run && ctx->n == N)
+            usleep(10*1000);
 
-    pthread_mutex_lock(&ctx->mutex);
-    if (ctx->n < N) {
-        // enqueue
-        assert(ctx->slots[ctx->head] == NULL);
-        printf("+ producer %lX push into slot #%d, data = %d, n = %d\n", id, ctx->head, task->data, ctx->n);
-        ctx->slots[ctx->head] = task;
-        ctx->head = (ctx->head + 1) % N;
-        // signal
-        ++ctx->n;
-        sem_post(&ctx->sem);
-        ret = 0;
-        assert(ctx->n <= N);
+        pthread_mutex_lock(&ctx->mutex);
+        if (ctx->run && ctx->n < N) {
+            // enqueue
+            assert(ctx->slots[ctx->head] == NULL);
+            printf("+ producer %lX push into slot #%d, data = %d, n = %d\n", id, ctx->head, task->data, ctx->n);
+            ctx->slots[ctx->head] = task;
+            ctx->head = (ctx->head + 1) % N;
+            // signal
+            ++ctx->n;
+            sem_post(&ctx->sem);
+            ret = 0;
+            assert(ctx->n <= N);
+        }
+        pthread_mutex_unlock(&ctx->mutex);
     }
-    pthread_mutex_unlock(&ctx->mutex);
 
     return (ret);
 }
@@ -156,6 +157,7 @@ void * producer(void * param)
     task_t * task;
     unisem_t * ctx = (unisem_t *)param;
     long unsigned id = pthread_self();
+    int ret;
 
     printf("producer %lX created\n", id);
 
@@ -163,7 +165,9 @@ void * producer(void * param)
     while (ctx->run) {
         task = (task_t *)malloc(sizeof(task_t));
         task->data = rand();
-        unisem_push(ctx, task);
+        ret = unisem_push(ctx, task);
+        if (ctx->run)
+            assert(ret == 0);
 #if 0
         // slow it down for demo
         usleep((rand() % 10 + 1)*10*1000);
